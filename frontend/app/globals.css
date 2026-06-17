@@ -1,0 +1,99 @@
+@import "tailwindcss";
+@import "@xyflow/react/dist/style.css";
+
+:root {
+  --bg: #0b0a07;
+  --panel: #131210;
+  --panel-2: #181612;
+  --inset: #08070500;
+  --ink: #ece7dd;
+  --muted: #98928699;
+  --muted-solid: #989286;
+  --faint: #6c675e;
+  --gold: #e6b24a;
+  --gold-pale: #f1cd82;
+  --gold-deep: #9a7522;
+  --patina: #57b39c;
+  --risk-low: #57b39c;
+  --risk-watch: #d99a3a;
+  --risk-high: #cf5a40;
+  --line: color-mix(in oklab, var(--gold) 13%, transparent);
+  --line-soft: color-mix(in oklab, var(--ink) 9%, transparent);
+  --ease: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+html, body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.mono { font-family: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-feature-settings: "tnum" 1, "zero" 1; letter-spacing: -0.01em; }
+
+.panel { background: var(--panel); border: 1px solid var(--line-soft); border-radius: 8px; }
+.rule { border-color: var(--line-soft); }
+.eyebrow { font-family: var(--font-geist-mono), monospace; font-size: 10px; font-weight: 500;
+  letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); }
+
+.divide-rule > * + * { border-top: 1px solid var(--line-soft); }
+
+.btn { transition: transform 140ms var(--ease), background-color 140ms var(--ease),
+  border-color 140ms var(--ease), color 140ms var(--ease); }
+.btn:active { transform: scale(0.97); }
+.btn-gold { background: var(--gold); color: #1c1505; }
+.btn-gold:hover { background: var(--gold-pale); }
+
+.tap { transition: transform 140ms var(--ease), color 140ms var(--ease),
+  background-color 140ms var(--ease); }
+.tap:active { transform: scale(0.98); }
+
+input, select { transition: border-color 140ms var(--ease), background-color 140ms var(--ease); }
+input:focus, select:focus { border-color: color-mix(in oklab, var(--gold) 45%, transparent); }
+
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-thumb { background: #2a2620; border-radius: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+@keyframes rise { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
+.rise { animation: rise 360ms var(--ease) both; }
+
+/* opacity-only entrance for SVG markers — must NOT animate transform, which would override
+   the SVG transform attribute used to position the marker on the map. */
+@keyframes markerIn { from { opacity: 0; } to { opacity: 1; } }
+.marker-in { animation: markerIn 400ms var(--ease) both; }
+
+/* target-acquired: a reticle that snaps inward onto the elevated hit (scale only, on an
+   inner group, so it never fights the positional SVG transform attribute on the parent) */
+@keyframes converge { from { transform: scale(3.6); opacity: 0; } 70% { opacity: 1; } to { transform: scale(1); opacity: 1; } }
+.reticle-converge { animation: converge 540ms var(--ease) both; transform-box: fill-box; transform-origin: center; }
+
+@keyframes acqBanner {
+  0% { opacity: 0; transform: translate(-50%, -8px) scale(0.96); }
+  10% { opacity: 1; transform: translate(-50%, 0) scale(1); }
+  82% { opacity: 1; transform: translate(-50%, 0) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, 0) scale(1); }
+}
+.acq-banner { animation: acqBanner 2.2s var(--ease) both; }
+
+@keyframes mapFlash { from { opacity: 0.26; } to { opacity: 0; } }
+.map-flash { animation: mapFlash 640ms var(--ease) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .rise { animation: none; }
+  .btn:active, .tap:active { transform: none; }
+}
+
+/* React Flow nodes — measurement marks, not neon. Borders + a hair of scale on activity. */
+.rf-node { transition: border-color 220ms var(--ease), color 220ms var(--ease),
+  transform 220ms var(--ease), background-color 220ms var(--ease);
+  border-radius: 6px; border: 1px solid var(--line-soft); background: var(--panel-2);
+  padding: 7px 11px; min-width: 112px; text-align: center; color: var(--muted-solid); }
+.rf-node.idle { opacity: 0.5; }
+.rf-node.running { border-color: var(--gold); color: var(--ink); transform: scale(1.04); opacity: 1; }
+.rf-node.done { border-color: color-mix(in oklab, var(--patina) 55%, transparent); color: var(--ink); opacity: 1; }
+.rf-node.flagged { border-color: var(--risk-high); color: var(--ink); opacity: 1; }
+.react-flow__attribution { display: none; }
+.react-flow__edge-path { stroke: var(--line); stroke-width: 1; }
+.react-flow__handle { opacity: 0; }

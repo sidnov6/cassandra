@@ -1,0 +1,12 @@
+.git
+**/node_modules
+frontend/.next
+frontend/out
+data/cache
+data/lake
+data/vectors
+data/dossiers
+data/sentinel-cron.log
+.claude
+**/__pycache__
+*.pyc

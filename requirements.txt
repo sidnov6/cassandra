@@ -1,0 +1,21 @@
+# CASSANDRA — thin-slice runtime dependencies
+# Core scientific stack (already present in most Anaconda installs)
+pandas>=2.0
+numpy>=1.24
+scipy>=1.10
+scikit-learn>=1.3
+# SEC ingestion / parsing
+requests>=2.31
+httpx>=0.27
+lxml>=4.9
+beautifulsoup4>=4.12
+# API + serving
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.6
+# Agent layer (optional LLM path — falls back to deterministic rules if absent)
+anthropic>=0.40
+# Optional upgrades (documented, not required to run the thin slice):
+#   lightgbm        -> production tabular tower (sklearn HistGradientBoosting used as the runnable default)
+#   langgraph       -> production agent orchestration (hand-rolled graph used for transparency/zero-dep)
+#   transformers    -> FinBERT text tower (Loughran-McDonald lexicon used as the runnable default)

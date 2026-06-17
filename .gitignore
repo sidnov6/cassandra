@@ -1,0 +1,33 @@
+# Data lake, caches, trained models, vectors (regenerable via scripts/)
+data/cache/
+data/lake/
+data/vectors/
+data/dossiers/
+# ship the eval report (text) so a fresh deploy (HF Space) shows the backtest; the trained
+# model binary stays local (the Space uses the transparent scorer + heuristic gate).
+data/models/*
+!data/models/report.json
+seed/*.parquet
+# keep the curated labels under version control:
+!data/labels/verified_cases.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.ipynb_checkpoints/
+
+# Node / Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+*.log
+
+# OS
+.DS_Store
+
+# Local tooling / editor scaffolding
+.claude/
+frontend/AGENTS.md
+frontend/CLAUDE.md
+data/sentinel-cron.log

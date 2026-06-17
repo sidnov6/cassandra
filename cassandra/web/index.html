@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CASSANDRA · Forensic Intelligence</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root{ --bg:#070b12; --panel:#0d141f; --panel2:#111a28; --line:#1c2940; --ink:#e8eef6; --muted:#8aa0b8; --cyan:#37e0c8; --accent:#5b8cff;}
+  html,body{background:var(--bg); color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;}
+  .mono{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;}
+  .glass{background:linear-gradient(180deg,rgba(23,34,52,.55),rgba(13,20,31,.7));border:1px solid rgba(120,160,220,.10);backdrop-filter:blur(8px);}
+  .panel{background:var(--panel);border:1px solid rgba(120,160,220,.10);}
+  .glow{box-shadow:0 0 0 1px rgba(91,140,255,.15),0 12px 40px -12px rgba(0,0,0,.7);}
+  ::-webkit-scrollbar{width:9px;height:9px} ::-webkit-scrollbar-thumb{background:#22324a;border-radius:6px}
+  .node{transition:all .35s cubic-bezier(.2,.8,.2,1)}
+  .node.idle{opacity:.45;border-color:rgba(120,160,220,.12)}
+  .node.running{border-color:var(--cyan);box-shadow:0 0 22px -4px rgba(55,224,200,.6);animation:pulse 1.1s infinite}
+  .node.done{border-color:rgba(55,224,200,.45);opacity:1}
+  .node.flagged{border-color:#ff6b6b;box-shadow:0 0 22px -6px rgba(255,107,107,.5)}
+  @keyframes pulse{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}
+  .fade{animation:fade .5s ease both}@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .trace-line{animation:fade .4s ease both}
+  .seg{height:6px;border-radius:99px;background:#15202f;overflow:hidden}
+  .seg>i{display:block;height:100%}
+  details>summary{list-style:none;cursor:pointer}details>summary::-webkit-details-marker{display:none}
+</style>
+</head>
+<body class="min-h-screen">
+<!-- ===== Top bar ===== -->
+<header class="sticky top-0 z-30 glass glow">
+  <div class="max-w-[1500px] mx-auto px-5 py-3 flex items-center gap-4">
+    <div class="flex items-center gap-2.5 shrink-0">
+      <div class="w-8 h-8 rounded-lg flex items-center justify-center font-bold"
+           style="background:linear-gradient(135deg,#37e0c8,#5b8cff);color:#04101a">Λ</div>
+      <div>
+        <div class="font-semibold tracking-tight leading-4">CASSANDRA</div>
+        <div class="text-[10px] text-[color:var(--muted)] tracking-wider uppercase">Forensic Intelligence</div>
+      </div>
+    </div>
+    <div class="relative flex-1 max-w-xl">
+      <input id="q" autocomplete="off" placeholder="Search ticker, company, or CIK   (e.g. AAPL, Under Armour, UAA 2015)"
+        class="w-full bg-[color:var(--panel2)] border border-[rgba(120,160,220,.14)] rounded-xl px-4 py-2.5 text-sm outline-none focus:border-[color:var(--cyan)]"/>
+      <div id="ac" class="absolute mt-1 w-full panel rounded-xl overflow-hidden hidden z-40 glow"></div>
+    </div>
+    <select id="year" class="bg-[color:var(--panel2)] border border-[rgba(120,160,220,.14)] rounded-xl px-3 py-2.5 text-sm outline-none">
+      <option value="">Latest FY</option>
+    </select>
+    <button id="go" class="px-5 py-2.5 rounded-xl text-sm font-semibold text-[#04101a]"
+      style="background:linear-gradient(135deg,#37e0c8,#5b8cff)">Analyze</button>
+    <span id="mode" class="text-[11px] px-2.5 py-1 rounded-lg border border-[rgba(120,160,220,.18)] text-[color:var(--muted)]">…</span>
+  </div>
+</header>
+
+<main class="max-w-[1500px] mx-auto px-5 py-5">
+  <!-- Hint / empty state -->
+  <div id="hint" class="text-center py-20">
+    <div class="text-2xl font-semibold tracking-tight mb-2">Point-in-time accounting-manipulation triage</div>
+    <p class="text-[color:var(--muted)] max-w-2xl mx-auto">Pulls a company's as-filed SEC financials, computes the forensic
+      battery (Beneish · Altman · Dechow F · accruals · Benford), fuses a calibrated risk score, and runs an agentic review
+      that argues both sides and cites its evidence. Try <b class="text-[color:var(--cyan)] cursor-pointer" onclick="demo('UAA',2015)">Under Armour · FY2015</b>
+      (an SEC-charged revenue case) or <b class="text-[color:var(--cyan)] cursor-pointer" onclick="demo('AAPL','')">Apple · latest</b>.</p>
+  </div>
+
+  <div id="board" class="hidden">
+    <!-- Identity row -->
+    <div class="flex items-end justify-between mb-4 flex-wrap gap-3">
+      <div>
+        <div id="co" class="text-xl font-semibold tracking-tight">—</div>
+        <div id="meta" class="text-[12px] text-[color:var(--muted)] mono">—</div>
+      </div>
+      <div id="pit" class="text-[11px] text-[color:var(--muted)]"></div>
+    </div>
+
+    <div class="grid grid-cols-12 gap-4">
+      <!-- ===== Left: score + contributions + metrics ===== -->
+      <section class="col-span-12 lg:col-span-4 space-y-4">
+        <div class="glass glow rounded-2xl p-5">
+          <div class="text-[11px] uppercase tracking-wider text-[color:var(--muted)] mb-1">Calibrated manipulation risk</div>
+          <div class="relative">
+            <canvas id="gauge" height="200"></canvas>
+            <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none" style="top:14px">
+              <div id="scoreVal" class="text-5xl font-bold mono">—</div>
+              <div id="bandVal" class="text-sm font-semibold tracking-wide mt-1">—</div>
+              <div id="confVal" class="text-[11px] text-[color:var(--muted)] mt-1"></div>
+            </div>
+          </div>
+          <div class="text-[11px] text-[color:var(--muted)] text-center mt-1">Triage flag, not a determination.</div>
+        </div>
+
+        <div class="panel rounded-2xl p-5">
+          <div class="text-[11px] uppercase tracking-wider text-[color:var(--muted)] mb-3">Modality contribution</div>
+          <div class="flex items-center gap-4">
+            <canvas id="donut" width="120" height="120" class="shrink-0"></canvas>
+            <div id="contribLegend" class="text-[12px] space-y-1.5 flex-1"></div>
+          </div>
+        </div>
+
+        <div class="panel rounded-2xl p-5">
+          <div class="text-[11px] uppercase tracking-wider text-[color:var(--muted)] mb-3">Forensic battery</div>
+          <div id="metrics" class="grid grid-cols-2 gap-2.5"></div>
+        </div>
+      </section>
+
+      <!-- ===== Center: agent journey ===== -->
+      <section class="col-span-12 lg:col-span-5 space-y-4">
+        <div class="glass glow rounded-2xl p-5">
+          <div class="flex items-center justify-between mb-3">
+            <div class="text-[11px] uppercase tracking-wider text-[color:var(--muted)]">Agentic reasoning journey</div>
+            <div id="journeyStatus" class="text-[11px] text-[color:var(--cyan)]"></div>
+          </div>
+          <div id="graph" class="grid grid-cols-3 gap-2 mb-3"></div>
+          <div id="trace" class="mono text-[11.5px] leading-5 bg-[#070d15] rounded-xl p-3 h-40 overflow-auto border border-[rgba(120,160,220,.08)]"></div>
+        </div>
+
+        <div class="panel rounded-2xl p-5">
+          <div class="text-[11px] uppercase tracking-wider text-[color:var(--muted)] mb-3">Evidence dossier · flags &amp; challenger</div>
+          <div id="flags" class="space-y-2.5"></div>
+        </div>
+      </section>
+
+      <!-- ===== Right: memo + analogues ===== -->
+      <section class="col-span-12 lg:col-span-3 space-y-4">
+        <div class="panel rounded-2xl p-5">
+          <div class="text-[11px] uppercase tracking-wider text-[color:var(--muted)] mb-2">Synthesis memo</div>
+          <pre id="memo" class="whitespace-pre-wrap text-[12px] leading-5 text-[#cfe0f2]"></pre>
+        </div>
+        <div class="panel rounded-2xl p-5">
+          <div class="text-[11px] uppercase tracking-wider text-[color:var(--muted)] mb-2">Historical analogues</div>
+          <div id="analogues" class="space-y-2 text-[12px] text-[color:var(--muted)]">—</div>
+        </div>
+      </section>
+
+      <!-- ===== Bottom: charts ===== -->
+      <section class="col-span-12 lg:col-span-6">
+        <div class="panel rounded-2xl p-5">
+          <div class="flex items-center justify-between mb-2">
+            <div class="text-[11px] uppercase tracking-wider text-[color:var(--muted)]">Benford's Law · first-digit distribution</div>
+            <div id="benMeta" class="text-[11px] mono text-[color:var(--muted)]"></div>
+          </div>
+          <canvas id="benford" height="150"></canvas>
+        </div>
+      </section>
+      <section class="col-span-12 lg:col-span-6">
+        <div class="panel rounded-2xl p-5">
+          <div class="text-[11px] uppercase tracking-wider text-[color:var(--muted)] mb-2">Escalation trajectory · multi-year</div>
+          <canvas id="trend" height="150"></canvas>
+        </div>
+      </section>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const fmt = (v,d=2)=> (v===null||v===undefined||Number.isNaN(v))?"—":(+v).toFixed(d);
+const riskColor = p => p>=.66 ? '#ff5d5d' : p>=.40 ? '#ffb13d' : '#37e0c8';
+let charts = {};
+
+// ---- health badge ----
+fetch('/api/health').then(r=>r.json()).then(h=>{
+  $('#mode').textContent = h.llm_mode==='llm' ? 'LLM · '+h.llm_model : 'deterministic agents';
+});
+
+// ---- autocomplete ----
+let acTimer;
+$('#q').addEventListener('input', e=>{
+  clearTimeout(acTimer); const v=e.target.value.trim();
+  if(v.length<1){ $('#ac').classList.add('hidden'); return; }
+  acTimer=setTimeout(async()=>{
+    const r= await fetch('/api/search?q='+encodeURIComponent(v)); const d=await r.json();
+    const box=$('#ac');
+    if(!d.results||!d.results.length){ box.classList.add('hidden'); return; }
+    box.innerHTML = d.results.map(x=>`<div class="px-4 py-2 hover:bg-[color:var(--panel2)] cursor-pointer flex justify-between"
+       onclick="pick('${x.ticker||x.cik}')"><span>${x.name}</span><span class="mono text-[color:var(--muted)] text-xs">${x.ticker||('CIK '+x.cik)}</span></div>`).join('');
+    box.classList.remove('hidden');
+  },180);
+});
+window.pick = t => { $('#q').value=t; $('#ac').classList.add('hidden'); run(); };
+window.demo = (t,y)=>{ $('#q').value=t; if(y!==undefined){ ensureYear(y); } run(); };
+function ensureYear(y){ const sel=$('#year'); if(![...sel.options].some(o=>o.value==y)){ const o=document.createElement('option'); o.value=y;o.textContent='FY'+y; sel.appendChild(o);} sel.value=y; }
+$('#go').addEventListener('click', run);
+$('#q').addEventListener('keydown', e=>{ if(e.key==='Enter'){ $('#ac').classList.add('hidden'); run(); }});
+
+// ---- node graph scaffold ----
+const NODE_LABEL = {router:'Router',revenue:'Revenue',accruals:'Accruals',cashflow:'Cash-Flow',
+  benford:'Benford',governance:'Governance',language:'Language',collector:'Collector',
+  challenger:'Challenger',analogue:'Analogue',synthesis:'Synthesis'};
+function buildGraph(nodes){
+  $('#graph').innerHTML = nodes.map(n=>`<div id="n-${n}" class="node idle panel rounded-lg px-2 py-2 text-center text-[11px]">
+     <div class="font-medium">${NODE_LABEL[n]||n}</div><div id="s-${n}" class="text-[10px] text-[color:var(--muted)] mt-0.5">idle</div></div>`).join('');
+}
+function setNode(n,status){ const el=$('#n-'+n); if(!el) return;
+  el.classList.remove('idle','running','done'); el.classList.add(status);
+  const s=$('#s-'+n); if(s) s.textContent=status; }
+function trace(node,msg){ const t=$('#trace'); const line=document.createElement('div'); line.className='trace-line';
+  line.innerHTML=`<span class="text-[color:var(--cyan)]">▸ ${NODE_LABEL[node]||node}</span> <span class="text-[#9fb4cc]">${msg}</span>`;
+  t.appendChild(line); t.scrollTop=t.scrollHeight; }
+
+let es;
+function run(){
+  const q=$('#q').value.trim(); if(!q) return;
+  const year=$('#year').value;
+  if(es) es.close();
+  $('#hint').classList.add('hidden'); $('#board').classList.remove('hidden');
+  $('#trace').innerHTML=''; $('#flags').innerHTML=''; $('#analogues').textContent='…'; $('#memo').textContent='';
+  $('#journeyStatus').textContent='running…';
+  buildGraph(['router','revenue','accruals','cashflow','benford','governance','language','collector','challenger','analogue','synthesis']);
+  const flagMap={};
+  let url='/api/score/stream?q='+encodeURIComponent(q)+(year?'&year='+year:'');
+  es=new EventSource(url);
+  es.onmessage=ev=>{
+    const d=JSON.parse(ev.data);
+    if(d.node==='__error__'){ $('#journeyStatus').textContent='error'; trace('router','ERROR: '+d.msg); es.close(); return; }
+    if(d.node==='__summary__'){ paintSummary(d.payload); return; }
+    if(d.node==='__final__'){ paintDossier(d.payload.dossier); $('#journeyStatus').textContent='complete'; es.close(); return; }
+    // node lifecycle
+    setNode(d.node, d.status);
+    if(d.msg) trace(d.node,d.msg);
+    if(d.status==='done' && d.payload && d.payload.flags && d.payload.flags.length){ setNode(d.node,'flagged'); }
+  };
+  es.onerror=()=>{ $('#journeyStatus').textContent='stream closed'; es.close(); };
+}
+
+// ---- summary paint ----
+function paintSummary(p){
+  $('#co').textContent = p.company.name + (p.company.ticker?('  ·  '+p.company.ticker):'');
+  $('#meta').textContent = `CIK ${p.company.cik}  ·  FY${p.filing.fiscal_year}  ·  accession ${p.filing.accession||'—'}`;
+  $('#pit').textContent = `point-in-time: ${p.filing.point_in_time}  ·  as-filed (amendments excluded)`;
+  // year selector
+  const sel=$('#year'); const cur=sel.value;
+  sel.innerHTML='<option value="">Latest FY</option>'+ (p.filing.fiscal_years_available||[]).slice().reverse().map(y=>`<option value="${y}">FY${y}</option>`).join('');
+  sel.value = cur || '';
+  const s=p.score;
+  drawGauge(s.calibrated_p); drawDonut(s.contributions);
+  $('#scoreVal').textContent=fmt(s.calibrated_p,2); $('#scoreVal').style.color=riskColor(s.calibrated_p);
+  $('#bandVal').textContent=s.band; $('#bandVal').style.color=riskColor(s.calibrated_p);
+  $('#confVal').textContent='confidence '+fmt(s.confidence,2);
+  paintMetrics(p.forensic.features, s.signals);
+  paintBenford(p.forensic.benford);
+  paintTrend(p.forensic.series);
+}
+
+function paintMetrics(f, signals){
+  const evOf={}; (signals||[]).forEach(s=>evOf[s.name]=s.evidence);
+  const rows=[
+    ['Beneish M', fmt(f.beneish_m,2), evOf['Beneish M-Score'], f.beneish_m>-1.78?'> −1.78 ⚠':'< −1.78'],
+    ['Dechow F', fmt(f.dechow_f,2), evOf['Dechow F-Score'], f.dechow_f>1?'> 1 ⚠':'≤ 1'],
+    ['Altman Z', fmt(f.altman_z,2), evOf['Altman Z-Score'], f.altman_z!=null?(f.altman_z<1.81?'distress':f.altman_z<2.99?'grey':'safe'):'—'],
+    ['Accruals/TA', fmt(f.accruals_to_ta,3), evOf['Accruals / Total Assets'], ''],
+    ['CFO / NI', fmt(f.cfo_ni_ratio,2), evOf['CFO / Net Income'], f.cfo_ni_ratio!=null&&f.cfo_ni_ratio<0.8?'divergence ⚠':''],
+    ['DSO Δ (days)', fmt(f.dso_yoy_delta,1), evOf['DSO YoY change (days)'], ''],
+  ];
+  $('#metrics').innerHTML = rows.map(([k,v,ev,note])=>{
+    const c = ev==null?'#5b6b80':(ev>.6?'#ff5d5d':ev>.4?'#ffb13d':'#37e0c8');
+    const w = ev==null?0:Math.round(ev*100);
+    return `<div class="panel rounded-lg p-2.5">
+      <div class="flex justify-between items-baseline"><span class="text-[11px] text-[color:var(--muted)]">${k}</span>
+        <span class="mono text-sm" style="color:${c}">${v}</span></div>
+      <div class="seg mt-1.5"><i style="width:${w}%;background:${c}"></i></div>
+      <div class="text-[10px] text-[color:var(--muted)] mt-1">${note||'&nbsp;'}</div></div>`;
+  }).join('');
+}
+
+// ---- dossier paint ----
+function paintDossier(dz){
+  $('#memo').textContent = dz.memo;
+  const rb={}; (dz.rebuttals||[]).forEach(r=>rb[r.flag_id]=r);
+  const pairs=(dz.flags||[]).map(f=>({f, r:rb[f.flag_id]})).sort((a,b)=>(b.r?.residual_concern||0)-(a.r?.residual_concern||0));
+  if(!pairs.length){ $('#flags').innerHTML=`<div class="text-[12px] text-[color:var(--muted)] panel rounded-lg p-3">No specialist raised a grounded concern at the configured thresholds. Continue routine monitoring.</div>`; }
+  else $('#flags').innerHTML = pairs.map(({f,r})=>{
+    const res=r?r.residual_concern:0; const c=res>.5?'#ff5d5d':res>.3?'#ffb13d':'#8aa0b8';
+    return `<details class="panel rounded-lg p-3 fade">
+      <summary class="flex items-center justify-between gap-2">
+        <span class="text-[13px] font-medium">${f.title}</span>
+        <span class="mono text-[11px] px-2 py-0.5 rounded" style="background:${c}22;color:${c}">res ${fmt(res,2)}</span>
+      </summary>
+      <div class="text-[11px] text-[color:var(--muted)] mt-1">${f.agent} · severity ${fmt(f.severity,2)} · confidence ${fmt(f.confidence,2)}</div>
+      <div class="text-[12px] mt-2 text-[#cfe0f2]">${f.rationale}</div>
+      ${r?`<div class="text-[12px] mt-2 pl-2 border-l-2 border-[#5b8cff]/40"><b class="text-[#9bb4ff]">Challenger:</b> ${r.benign_explanation}</div>`:''}
+      <div class="text-[10px] text-[color:var(--muted)] mt-2 mono">${(f.evidence_refs||[]).join('  ·  ')}</div>
+    </details>`;
+  }).join('');
+  const an=dz.analogues||[];
+  $('#analogues').innerHTML = an.length? an.map(a=>`<div class="panel rounded-lg p-2.5">
+      <div class="flex justify-between"><b class="text-[#cfe0f2]">${a.case_name}</b><span class="mono text-[color:var(--cyan)]">sim ${fmt(a.similarity,2)}</span></div>
+      <div class="mt-0.5">${a.shared_pattern}</div>${a.in_distribution?'':'<div class="text-[10px] mt-1 text-[#ffb13d]">out-of-distribution · qualitative analogue</div>'}</div>`).join('')
+    : '<div class="panel rounded-lg p-2.5">No strong historical analogue.</div>';
+}
+
+// ---- charts ----
+function drawGauge(p){
+  const ctx=$('#gauge'); if(charts.g) charts.g.destroy();
+  charts.g=new Chart(ctx,{type:'doughnut',data:{datasets:[{data:[p,1-p],
+    backgroundColor:[riskColor(p),'#16202e'],borderWidth:0,circumference:270,rotation:225}]},
+    options:{cutout:'72%',plugins:{legend:{display:false},tooltip:{enabled:false}},responsive:true}});
+}
+function drawDonut(c){
+  const labels=Object.keys(c), data=labels.map(k=>c[k]);
+  const col={tabular:'#5b8cff',text:'#37e0c8',temporal:'#b78cff',benford:'#ffb13d'};
+  if(charts.d) charts.d.destroy();
+  charts.d=new Chart($('#donut'),{type:'doughnut',data:{labels,datasets:[{data,
+    backgroundColor:labels.map(l=>col[l]||'#888'),borderWidth:0}]},
+    options:{cutout:'66%',plugins:{legend:{display:false},tooltip:{enabled:false}}}});
+  $('#contribLegend').innerHTML=labels.map(l=>`<div class="flex justify-between"><span><i class="inline-block w-2.5 h-2.5 rounded-sm mr-2" style="background:${col[l]||'#888'}"></i>${l}</span><span class="mono text-[color:var(--muted)]">${Math.round(c[l]*100)}%</span></div>`).join('');
+}
+function paintBenford(b){
+  if(!b){ $('#benMeta').textContent='insufficient numeric population'; if(charts.b)charts.b.destroy(); return; }
+  $('#benMeta').textContent=`n=${b.n} · MAD ${fmt(b.mad,4)} · ${b.conformity}`;
+  if(charts.b) charts.b.destroy();
+  charts.b=new Chart($('#benford'),{data:{labels:b.digits,datasets:[
+    {type:'bar',label:'observed',data:b.observed,backgroundColor:b.conformity==='nonconformity'?'#ff8a5d':'#37e0c8',borderRadius:3},
+    {type:'line',label:'Benford expected',data:b.expected,borderColor:'#5b8cff',borderWidth:2,pointRadius:2,tension:.3}]},
+    options:{scales:{y:{ticks:{color:'#7a8ba0'},grid:{color:'#162234'}},x:{ticks:{color:'#7a8ba0'},grid:{display:false}}},
+      plugins:{legend:{labels:{color:'#9fb4cc',boxWidth:12,font:{size:10}}}}}});
+}
+function paintTrend(s){
+  if(!s||!s.fye){ if(charts.t)charts.t.destroy(); return;}
+  const yrs=s.fye.map(d=>d.slice(0,4));
+  if(charts.t) charts.t.destroy();
+  charts.t=new Chart($('#trend'),{data:{labels:yrs,datasets:[
+    {type:'line',label:'Beneish M',data:s.m_score,borderColor:'#37e0c8',yAxisID:'y',borderWidth:2,pointRadius:2,tension:.3,spanGaps:true},
+    {type:'line',label:'Accruals/TA',data:s.accruals_to_ta,borderColor:'#ffb13d',yAxisID:'y',borderWidth:2,pointRadius:2,tension:.3,spanGaps:true},
+    {type:'bar',label:'DSO (days)',data:s.dso,backgroundColor:'#5b8cff44',yAxisID:'y1'}]},
+    options:{scales:{
+      y:{position:'left',ticks:{color:'#7a8ba0'},grid:{color:'#162234'}},
+      y1:{position:'right',ticks:{color:'#7a8ba0'},grid:{display:false}},
+      x:{ticks:{color:'#7a8ba0'},grid:{display:false}}},
+      plugins:{legend:{labels:{color:'#9fb4cc',boxWidth:12,font:{size:10}}}}}});
+}
+</script>
+</body>
+</html>
