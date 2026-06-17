@@ -10,42 +10,69 @@ import json
 import re
 from typing import Any, Optional
 
-from ..config import ANTHROPIC_API_KEY, LLM_ENABLED, LLM_MODEL
+from ..config import (ANTHROPIC_API_KEY, GROQ_API_KEY, GROQ_MODEL, LLM_ENABLED,
+                      LLM_MODEL, LLM_PROVIDER)
 
 
 def llm_available() -> bool:
     return LLM_ENABLED
 
 
+def _groq_chat(system: str, user: str, max_tokens: int) -> Optional[str]:
+    """Groq's OpenAI-compatible chat completions (httpx, no extra dependency), with a short
+    backoff on 429 so the agent graph's burst of calls degrades gracefully under free-tier
+    rate limits rather than all falling back at once."""
+    import time
+
+    import httpx
+    for attempt in range(3):
+        r = httpx.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+            json={"model": GROQ_MODEL, "max_tokens": max_tokens, "temperature": 0.2,
+                  "messages": [{"role": "system", "content": system},
+                               {"role": "user", "content": user}]},
+            timeout=45,
+        )
+        if r.status_code == 429 and attempt < 2:
+            time.sleep(1.2 * (attempt + 1))
+            continue
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"]
+    return None
+
+
+def _anthropic_chat(system: str, user: str, max_tokens: int) -> Optional[str]:
+    import anthropic
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    msg = client.messages.create(model=LLM_MODEL, max_tokens=max_tokens, system=system,
+                                 messages=[{"role": "user", "content": user}])
+    return "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+
+
+def _chat(system: str, user: str, max_tokens: int) -> Optional[str]:
+    if LLM_PROVIDER == "groq":
+        return _groq_chat(system, user, max_tokens)
+    if LLM_PROVIDER == "anthropic":
+        return _anthropic_chat(system, user, max_tokens)
+    return None
+
+
 def call_json(system: str, user: str, max_tokens: int = 1500) -> Optional[Any]:
-    """Call Claude and parse a JSON object/array from the response. None on any failure."""
-    if not ANTHROPIC_API_KEY:
+    """Call the active LLM and parse a JSON object/array. None on any failure."""
+    if not LLM_ENABLED:
         return None
     try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        msg = client.messages.create(
-            model=LLM_MODEL, max_tokens=max_tokens,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-        )
-        text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
-        return _extract_json(text)
+        return _extract_json(_chat(system, user, max_tokens) or "")
     except Exception:
         return None
 
 
 def call_text(system: str, user: str, max_tokens: int = 1800) -> Optional[str]:
-    if not ANTHROPIC_API_KEY:
+    if not LLM_ENABLED:
         return None
     try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        msg = client.messages.create(
-            model=LLM_MODEL, max_tokens=max_tokens, system=system,
-            messages=[{"role": "user", "content": user}],
-        )
-        return "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+        return _chat(system, user, max_tokens)
     except Exception:
         return None
 

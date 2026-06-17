@@ -22,7 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from ..agents.orchestrator import GRAPH_NODES, stream_agent_graph
-from ..config import LLM_ENABLED, LLM_MODEL
+from ..config import LLM_ENABLED, LLM_MODEL, LLM_PROVIDER
 from ..ingest.edgar import EdgarClient
 from ..pipeline import build_analysis
 
@@ -40,7 +40,8 @@ WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 @app.get("/api/health")
 def health():
     return {"status": "ok", "llm_mode": "llm" if LLM_ENABLED else "deterministic",
-            "llm_model": LLM_MODEL if LLM_ENABLED else None, "graph_nodes": GRAPH_NODES}
+            "llm_provider": LLM_PROVIDER, "llm_model": LLM_MODEL if LLM_ENABLED else None,
+            "graph_nodes": GRAPH_NODES}
 
 
 @app.get("/api/search")

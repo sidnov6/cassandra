@@ -23,11 +23,23 @@ DOSSIER_DIR = DATA_DIR / "dossiers"
 for _d in (DATA_DIR, CACHE_DIR, DOSSIER_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
-# --- LLM (agent layer) -----------------------------------------------------------------
+# --- LLM (agent layer) — provider-agnostic, key only ever from the environment -----------
+# Priority: Groq (fast, OpenAI-compatible) -> Anthropic -> deterministic rules (no key).
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+# Default to the high-throughput model: the agent graph fires ~8 calls per filing, and Groq's
+# free tier rate-limits the 70B model to ~1 req/window. Override for quality on a paid tier:
+#   export CASSANDRA_GROQ_MODEL="llama-3.3-70b-versatile"
+GROQ_MODEL = os.environ.get("CASSANDRA_GROQ_MODEL", "llama-3.1-8b-instant")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-# Latest, most capable model by default; cheap model for routing/aux if desired.
-LLM_MODEL = os.environ.get("CASSANDRA_LLM_MODEL", "claude-opus-4-8")
-LLM_ENABLED = bool(ANTHROPIC_API_KEY)
+ANTHROPIC_MODEL = os.environ.get("CASSANDRA_LLM_MODEL", "claude-opus-4-8")
+
+if GROQ_API_KEY:
+    LLM_PROVIDER, LLM_MODEL = "groq", GROQ_MODEL
+elif ANTHROPIC_API_KEY:
+    LLM_PROVIDER, LLM_MODEL = "anthropic", ANTHROPIC_MODEL
+else:
+    LLM_PROVIDER, LLM_MODEL = None, None
+LLM_ENABLED = LLM_PROVIDER is not None
 
 # --- Cache freshness -------------------------------------------------------------------
 CACHE_TTL_SECONDS = int(os.environ.get("CASSANDRA_CACHE_TTL", str(7 * 24 * 3600)))
